@@ -15,7 +15,7 @@ CWA_WARNINGS_API_URL = "https://alerts.ncdr.nat.gov.tw/JSONAtomFeed.ashx"
 
 # 請替換成您在中央氣象署申請的真實 API Key
 # 這是代理伺服器內部使用的，前端不需要知道這個 Key
-CWA_API_KEY = "CWA-YOUR_API_KEY" # <--- 請將此處替換為您的真實 API Key
+CWA_API_KEY = "CWA-DA27CC49-2356-447C-BDB3-D5AA4071E24B" # <--- 請將此處替換為您的真實 API Key
 
 @app.route('/get-typhoon-data')
 def get_typhoon_data():
@@ -50,7 +50,6 @@ def get_cwa_warnings():
         
         warnings = []
         # 根據實際 JSON 結構解析特報
-        # 假設 JSON 結構類似於 Atom Feed，但以 JSON 物件呈現
         # 實際測試發現，這個 JSON Atom Feed 的結構是：
         # { "feed": { "entry": [...] } }
         
