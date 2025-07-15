@@ -3,25 +3,30 @@ from flask_cors import CORS
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime
+import json # 新增：引入 json 模組
 
 app = Flask(__name__)
 CORS(app) # 允許所有來源的跨域請求
 
-# 中央氣象署颱風路徑 API (W-C0034-005)
-CWA_TYPHOON_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034-005?Authorization=CWA-YOUR_API_KEY"
-# 中央氣象署氣象特報 RSS
-CWA_WARNINGS_RSS_URL = "https://alerts.ncdr.nat.gov.tw/JSONAtomFeed.ashx"
+# 中央氣象署颱風路徑 API 基礎 URL
+CWA_TYPHOON_API_BASE_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034-005"
+# 中央氣象署氣象特報 RSS (實際為 JSON)
+CWA_WARNINGS_API_URL = "https://alerts.ncdr.nat.gov.tw/JSONAtomFeed.ashx"
 
-# 請替換成您在中央氣象署申請的 API Key
-# CWA_API_KEY = "CWA-YOUR_API_KEY" # 這裡應該替換成您自己的 API Key
+# 請替換成您在中央氣象署申請的真實 API Key
+# 這是代理伺服器內部使用的，前端不需要知道這個 Key
+CWA_API_KEY = "CWA-YOUR_API_KEY" # <--- 請將此處替換為您的真實 API Key
 
 @app.route('/get-typhoon-data')
 def get_typhoon_data():
-    api_key = request.args.get('api_key') # 從前端獲取 API Key
-    if not api_key:
-        return jsonify({"success": False, "message": "API Key is missing."}), 400
+    """
+    從中央氣象署獲取颱風路徑資料。
+    代理伺服器內部使用 CWA_API_KEY，前端不需要提供 API Key。
+    """
+    if CWA_API_KEY == "CWA-YOUR_API_KEY" or not CWA_API_KEY:
+        return jsonify({"success": False, "message": "代理伺服器未設定中央氣象署 API Key。請在 api.py 中替換 'CWA-YOUR_API_KEY'。"}), 500
 
-    full_url = CWA_TYPHOON_API_URL.replace("CWA-YOUR_API_KEY", api_key)
+    full_url = f"{CWA_TYPHOON_API_BASE_URL}?Authorization={CWA_API_KEY}"
     try:
         response = requests.get(full_url)
         response.raise_for_status() # 檢查 HTTP 錯誤
@@ -33,48 +38,44 @@ def get_typhoon_data():
 
 @app.route('/get-cwa-warnings')
 def get_cwa_warnings():
+    """
+    從中央氣象署獲取氣象特報資料 (實際為 JSON 格式)。
+    """
     try:
-        response = requests.get(CWA_WARNINGS_RSS_URL)
+        response = requests.get(CWA_WARNINGS_API_URL)
         response.raise_for_status() # 檢查 HTTP 錯誤
         
-        # 修正：使用 response.text 來獲取字串內容，避免編碼問題
-        root = ET.fromstring(response.text)
+        # 修正：將回應解析為 JSON，而不是 XML
+        data = response.json()
         
         warnings = []
-        # Atom Feed 的命名空間
-        ns = {'atom': 'http://www.w3.org/2005/Atom', 
-              'cap': 'urn:oasis:names:tc:emergency:cap:1.2'}
+        # 根據實際 JSON 結構解析特報
+        # 假設 JSON 結構類似於 Atom Feed，但以 JSON 物件呈現
+        # 實際測試發現，這個 JSON Atom Feed 的結構是：
+        # { "feed": { "entry": [...] } }
+        
+        if "feed" in data and "entry" in data["feed"] and isinstance(data["feed"]["entry"], list):
+            for entry in data["feed"]["entry"]:
+                title = entry.get('title', {}).get('__text', '無標題')
+                pub_date_str = entry.get('published', {}).get('__text', '')
+                link = entry.get('link', {}).get('href', '#')
+                description = entry.get('content', {}).get('__text', '無描述') # 嘗試從 content 獲取
 
-        for entry in root.findall('atom:entry', ns):
-            title = entry.find('atom:title', ns).text if entry.find('atom:title', ns) is not None else '無標題'
-            pub_date_str = entry.find('atom:published', ns).text if entry.find('atom:published', ns) is not None else ''
-            link_elem = entry.find('atom:link', ns)
-            link = link_elem.get('href') if link_elem is not None else '#'
-
-            # 嘗試從 content 或 summary 獲取描述
-            description = '無描述'
-            content_elem = entry.find('atom:content', ns)
-            if content_elem is not None and content_elem.text:
-                description = content_elem.text
-            else:
-                summary_elem = entry.find('atom:summary', ns)
-                if summary_elem is not None and summary_elem.text:
-                    description = summary_elem.text
-
-            warnings.append({
-                "title": title,
-                "pubDate": pub_date_str,
-                "description": description,
-                "link": link
-            })
+                warnings.append({
+                    "title": title,
+                    "pubDate": pub_date_str,
+                    "description": description,
+                    "link": link
+                })
         
         return jsonify({"success": True, "warnings": warnings})
     except requests.exceptions.RequestException as e:
         print(f"Error fetching CWA warnings: {e}")
         return jsonify({"success": False, "message": f"無法從中央氣象署獲取特報資料: {e}"}), 500
-    except ET.ParseError as e:
-        print(f"Error parsing CWA warnings XML: {e}")
-        return jsonify({"success": False, "message": f"解析特報資料失敗: {e}"}), 500
+    except json.JSONDecodeError as e:
+        print(f"Error parsing CWA warnings JSON: {e}")
+        print(f"Problematic JSON content start: {response.text[:500]}") # 打印部分內容以供偵錯
+        return jsonify({"success": False, "message": f"解析特報資料失敗 (JSON 格式錯誤): {e}"}), 500
     except Exception as e:
         print(f"An unexpected error occurred in get_cwa_warnings: {e}")
         return jsonify({"success": False, "message": f"處理特報資料時發生未知錯誤: {e}"}), 500
