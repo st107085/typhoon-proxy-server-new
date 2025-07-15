@@ -37,8 +37,8 @@ def get_cwa_warnings():
         response = requests.get(CWA_WARNINGS_RSS_URL)
         response.raise_for_status() # 檢查 HTTP 錯誤
         
-        # 解析 XML
-        root = ET.fromstring(response.content)
+        # 修正：使用 response.text 來獲取字串內容，避免編碼問題
+        root = ET.fromstring(response.text)
         
         warnings = []
         # Atom Feed 的命名空間
@@ -75,6 +75,10 @@ def get_cwa_warnings():
     except ET.ParseError as e:
         print(f"Error parsing CWA warnings XML: {e}")
         return jsonify({"success": False, "message": f"解析特報資料失敗: {e}"}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred in get_cwa_warnings: {e}")
+        return jsonify({"success": False, "message": f"處理特報資料時發生未知錯誤: {e}"}), 500
+
 
 def parse_atcf_line(line):
     """
