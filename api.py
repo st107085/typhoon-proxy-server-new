@@ -1,17 +1,17 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET # 重新啟用 XML 解析
 from datetime import datetime
-import json # 新增：引入 json 模組
+import json # 仍然保留 json 模組以防萬一或用於其他 JSON 處理
 
 app = Flask(__name__)
 CORS(app) # 允許所有來源的跨域請求
 
 # 中央氣象署颱風路徑 API 基礎 URL
 CWA_TYPHOON_API_BASE_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034-005"
-# 中央氣象署氣象特報 RSS (實際為 JSON)
-CWA_WARNINGS_API_URL = "https://alerts.ncdr.nat.gov.tw/JSONAtomFeed.ashx"
+# 中央氣象署氣象特報 RSS (修正為正確的 XML RSS 服務)
+CWA_WARNINGS_RSS_URL = "https://www.cwa.gov.tw/rss/Data/cwa_warning.xml"
 
 # 請替換成您在中央氣象署申請的真實 API Key
 # 這是代理伺服器內部使用的，前端不需要知道這個 Key
@@ -35,46 +35,49 @@ def get_typhoon_data():
     except requests.exceptions.RequestException as e:
         print(f"Error fetching CWA typhoon data: {e}")
         return jsonify({"success": False, "message": f"無法從中央氣象署獲取颱風資料: {e}"}), 500
+    except json.JSONDecodeError as e:
+        print(f"Error parsing CWA typhoon data JSON: {e}")
+        return jsonify({"success": False, "message": f"解析颱風資料失敗 (JSON 格式錯誤): {e}"}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred in get_typhoon_data: {e}")
+        return jsonify({"success": False, "message": f"處理颱風資料時發生未知錯誤: {e}"}), 500
 
 @app.route('/get-cwa-warnings')
 def get_cwa_warnings():
     """
-    從中央氣象署獲取氣象特報資料 (實際為 JSON 格式)。
+    從中央氣象署獲取氣象特報資料 (現在是正確的 XML RSS 格式)。
     """
     try:
-        response = requests.get(CWA_WARNINGS_API_URL)
+        response = requests.get(CWA_WARNINGS_RSS_URL)
         response.raise_for_status() # 檢查 HTTP 錯誤
         
-        # 修正：將回應解析為 JSON，而不是 XML
-        data = response.json()
+        # 修正：現在使用 ET.fromstring 解析 XML，因為 URL 已更正為 XML RSS
+        root = ET.fromstring(response.content) # 使用 .content 獲取原始位元組，ET.fromstring 可以處理
         
         warnings = []
-        # 根據實際 JSON 結構解析特報
-        # 實際測試發現，這個 JSON Atom Feed 的結構是：
-        # { "feed": { "entry": [...] } }
-        
-        if "feed" in data and "entry" in data["feed"] and isinstance(data["feed"]["entry"], list):
-            for entry in data["feed"]["entry"]:
-                title = entry.get('title', {}).get('__text', '無標題')
-                pub_date_str = entry.get('published', {}).get('__text', '')
-                link = entry.get('link', {}).get('href', '#')
-                description = entry.get('content', {}).get('__text', '無描述') # 嘗試從 content 獲取
+        # RSS feed 的結構通常是 <rss><channel><item>...</item></channel></rss>
+        # 我們遍歷所有的 <item> 標籤
+        for item in root.findall('.//item'):
+            title = item.find('title').text if item.find('title') is not None else '無標題'
+            pub_date_str = item.find('pubDate').text if item.find('pubDate') is not None else ''
+            link = item.find('link').text if item.find('link') is not None else '#'
+            description = item.find('description').text if item.find('description') is not None else '無描述'
 
-                warnings.append({
-                    "title": title,
-                    "pubDate": pub_date_str,
-                    "description": description,
-                    "link": link
-                })
+            warnings.append({
+                "title": title,
+                "pubDate": pub_date_str,
+                "description": description,
+                "link": link
+            })
         
         return jsonify({"success": True, "warnings": warnings})
     except requests.exceptions.RequestException as e:
         print(f"Error fetching CWA warnings: {e}")
         return jsonify({"success": False, "message": f"無法從中央氣象署獲取特報資料: {e}"}), 500
-    except json.JSONDecodeError as e:
-        print(f"Error parsing CWA warnings JSON: {e}")
-        print(f"Problematic JSON content start: {response.text[:500]}") # 打印部分內容以供偵錯
-        return jsonify({"success": False, "message": f"解析特報資料失敗 (JSON 格式錯誤): {e}"}), 500
+    except ET.ParseError as e: # 捕獲 XML 解析錯誤
+        print(f"Error parsing CWA warnings XML: {e}")
+        print(f"Problematic XML content start: {response.text[:500]}") # 打印部分內容以供偵錯
+        return jsonify({"success": False, "message": f"解析特報資料失敗 (XML 格式錯誤): {e}"}), 500
     except Exception as e:
         print(f"An unexpected error occurred in get_cwa_warnings: {e}")
         return jsonify({"success": False, "message": f"處理特報資料時發生未知錯誤: {e}"}), 500
