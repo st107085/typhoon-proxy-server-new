@@ -228,8 +228,15 @@ def get_international_typhoon_data():
     並解析後返回其中一個（例如，最新的或第一個找到的）颱風路徑資料。
     """
     print(f"嘗試從 JTWC 獲取數據: {JTWC_ATCF_PUBLIC_URL}")
+    
+    # 定義 User-Agent 標頭，偽裝成一個常見的瀏覽器
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+    }
+
     try:
-        response = requests.get(JTWC_ATCF_PUBLIC_URL, timeout=10) # 增加超時設定
+        # 向 JTWC 公開 ATCF URL 發送請求，並帶上 User-Agent 標頭
+        response = requests.get(JTWC_ATCF_PUBLIC_URL, headers=headers, timeout=10) # 增加超時設定
         response.raise_for_status() # 檢查 HTTP 錯誤
 
         atcf_lines = response.text.strip().split('\n')
