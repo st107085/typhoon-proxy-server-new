@@ -9,6 +9,7 @@ import requests # 用於發送 HTTP 請求到外部 API
 import json # 導入 json 模組用於解析錯誤訊息
 import xml.etree.ElementTree as ET # 用於解析 XML 格式的資料 (例如氣象特報 RSS)
 from datetime import datetime # 用於解析日期時間
+import traceback # 導入 traceback 以獲取完整的錯誤堆疊資訊
 
 app = Flask(__name__)
 CORS(app) # 允許所有來源的跨域請求。在實際部署時，為了安全考量，
@@ -138,8 +139,7 @@ def parse_atcf_line(line):
     """
     parts = line.strip().split(',')
     # ATCF 格式至少有 20 個欄位，但有些簡化數據可能較少。
-    # 這裡我們需要確保至少有足夠的欄位來解析我們關心的數據。
-    # 確保有足夠的欄位來解析到颱風名稱 (欄位 27)
+    # 這裡我們需要確保至少有足夠的欄位來解析我們關心的數據（至少到颱風名稱欄位 27）。
     if len(parts) < 28: 
         # print(f"Warning: ATCF line has too few parts to parse all expected fields: {line.strip()}")
         return None
@@ -169,10 +169,13 @@ def parse_atcf_line(line):
         year_prefix = "20" if int(dt_str[0:2]) < 50 else "19" 
         full_dt_str = year_prefix + dt_str
         
-        # 嘗試解析為 datetime 物件
-        # 格式: YYYYMMDDHH (例如 2025071512)
-        dt_object = datetime.strptime(full_dt_str, '%Y%m%d%H')
-        time_iso = dt_object.isoformat() + 'Z' # 轉換為 ISO 8601 格式，UTC
+        # 嘗試解析為 datetime 物件，增加錯誤處理
+        try:
+            dt_object = datetime.strptime(full_dt_str, '%Y%m%d%H')
+            time_iso = dt_object.isoformat() + 'Z' # 轉換為 ISO 8601 格式，UTC
+        except ValueError as ve:
+            print(f"日期時間解析錯誤: {full_dt_str} - {ve}")
+            return None
 
         # 解析緯度 (格式如 150N, 200S，表示 15.0N, 20.0S)
         lat_str = parts[6].strip()
@@ -215,6 +218,7 @@ def parse_atcf_line(line):
         }
     except (ValueError, IndexError) as e:
         print(f"解析 ATCF 行時發生錯誤 (可能資料不完整或格式不符): {line.strip()} - 錯誤: {e}")
+        traceback.print_exc() # 打印完整的錯誤堆疊資訊
         return None
 
 @app.route('/get-international-typhoon-data')
@@ -223,16 +227,18 @@ def get_international_typhoon_data():
     這個端點將從 JTWC 的公共 ATCF 檔案獲取所有活躍熱帶氣旋的數據，
     並解析後返回其中一個（例如，最新的或第一個找到的）颱風路徑資料。
     """
+    print(f"嘗試從 JTWC 獲取數據: {JTWC_ATCF_PUBLIC_URL}")
     try:
-        response = requests.get(JTWC_ATCF_PUBLIC_URL)
+        response = requests.get(JTWC_ATCF_PUBLIC_URL, timeout=10) # 增加超時設定
         response.raise_for_status() # 檢查 HTTP 錯誤
 
         atcf_lines = response.text.strip().split('\n')
+        print(f"成功獲取 JTWC 數據，共 {len(atcf_lines)} 行。")
         
         # 用於儲存所有解析後的颱風數據，按 ID 分組
         all_typhoons_parsed_data = {}
 
-        for line in atcf_lines:
+        for line_num, line in enumerate(atcf_lines):
             # 跳過註解行 (通常以 # 或空白開頭)
             if not line.strip() or line.strip().startswith('#'):
                 continue
@@ -282,6 +288,8 @@ def get_international_typhoon_data():
                         "pressure_hpa": parsed_point["pressure_hpa"],
                         "forecastPeriod_hours": parsed_point["forecastPeriod_hours"]
                     })
+            else:
+                print(f"警告: 無法解析 JTWC ATCF 檔案中第 {line_num + 1} 行的數據: {line.strip()}")
         
         # 選擇一個颱風來顯示。如果有多個，我們選擇 ID 最大的那個 (通常是最新生成的颱風)
         # 確保選中的颱風有數據
@@ -309,9 +317,11 @@ def get_international_typhoon_data():
 
     except requests.exceptions.RequestException as e:
         print(f"獲取 JTWC 公開 ATCF 數據失敗: {e}")
+        traceback.print_exc() # 打印完整的錯誤堆疊資訊
         return jsonify({"success": False, "message": f"無法從 JTWC 獲取國際颱風資料: {e}"}), 500
     except Exception as e:
         print(f"處理 JTWC 公開 ATCF 數據時發生錯誤: {e}")
+        traceback.print_exc() # 打印完整的錯誤堆疊資訊
         return jsonify({"success": False, "message": f"處理國際颱風資料失敗: {e}"}), 500
 
 if __name__ == '__main__':
