@@ -15,7 +15,7 @@ CWA_WARNINGS_RSS_URL = "https://www.cwa.gov.tw/rss/Data/cwa_warning.xml"
 
 # 請替換成您在中央氣象署申請的真實 API Key
 # 這是代理伺服器內部使用的，前端不需要知道這個 Key
-CWA_API_KEY = "CWA-DA27CC49-2356-447C-BDB3-D5AA4071E24B" # <--- 請將此處替換為您的真實 API Key
+CWA_API_KEY = "CWA-DA27CC49-2356-447C-BDB3-D5AA4071E24B" # <--- 已替換為您提供的真實 API Key
 
 @app.route('/get-typhoon-data')
 def get_typhoon_data():
