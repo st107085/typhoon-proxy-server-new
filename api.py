@@ -27,8 +27,8 @@ CWA_TYPHOON_API_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034
 # 中央氣象署 RSS 警報特報服務 (提供XML格式的最新氣象特報)
 CWA_RSS_WARNING_URL = 'https://www.cwa.gov.tw/rss/Data/cwa_warning.xml'
 
-# *** 新增：直接從您 GitHub 倉庫中獲取 KML 檔案的 URL ***
-# 請將 'wdfwfs' 替換為您的 GitHub 帳號，'typhoon-info-hub' 替換為您的倉庫名稱
+# *** 修正點：直接從您 GitHub 倉庫中獲取 KML 檔案的 URL ***
+# 請將 'st107085' 替換為您的 GitHub 帳號，'typhoon-info-hub' 替換為您的倉庫名稱
 # 假設 KML 檔案將由 GitHub Actions 儲存在倉庫的 'data/' 目錄下，並命名為 'typhoon_track.kml'
 NSTC_OPENDATA_KML_URL = "https://raw.githubusercontent.com/st107085/typhoon-info-hub/main/data/typhoon_track.kml"
 
@@ -217,21 +217,22 @@ def get_international_typhoon_data():
         # 1. 從您自己的 GitHub 倉庫下載 KML 檔案
         print(f"Attempting to fetch KML from GitHub: {NSTC_OPENDATA_KML_URL}")
         # 從 GitHub raw 檔案獲取數據是安全的，不需要禁用 SSL 驗證 (verify=True 是預設值)
-        kml_response = requests.get(NSTC_OPENDATA_KML_URL, timeout=15)
+        kml_response = requests.get(NSTC_OPENDATA_KML_URL, timeout=15) 
         kml_response.raise_for_status() # 檢查 HTTP 錯誤
         print(f"Successfully fetched KML from GitHub. Status: {kml_response.status_code}")
-
+        
         kml_data = kml_response.text
-
+        
         if not kml_data.strip():
             print(f"從 {NSTC_OPENDATA_KML_URL} 獲取的 KML 數據為空。")
             return jsonify({"success": False, "message": "從 GitHub 獲取到 KML 數據，但內容為空。"}), 200
 
         # 2. 解析 KML 數據
         typhoon_paths = parse_kml_data(kml_data)
-
+        
         if typhoon_paths:
             print(f"成功從 {NSTC_OPENDATA_KML_URL} 獲取並解析國際颱風數據。")
+            # 注意：這裡將返回一個包含多個颱風路徑的列表
             return jsonify({"success": True, "typhoonPaths": typhoon_paths})
         else:
             print("從獲取的 KML 數據中未找到任何颱風路徑資訊。")
