@@ -231,7 +231,18 @@ def get_international_typhoon_data():
     
     # 定義 User-Agent 標頭，偽裝成一個常見的瀏覽器
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br', # 新增：接受壓縮編碼
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Connection': 'keep-alive',
+        'Referer': 'https://www.metoc.navy.mil/jtwc/jtwc.html', # 偽造來源網頁，讓它看起來是從 JTWC 首頁點擊進來的
+        'DNT': '1', # 新增：Do Not Track 標頭
+        'Upgrade-Insecure-Requests': '1', # 新增：請求升級到 HTTPS
+        'Sec-Fetch-Dest': 'document', # 新增：指示目標是文件
+        'Sec-Fetch-Mode': 'navigate', # 新增：指示是導航發起的請求
+        'Sec-Fetch-Site': 'same-origin', # 新增：指示同站點來源 (儘管代理是跨站點)
+        'Sec-Fetch-User': '?1' # 新增：指示用戶發起的請求
     }
 
     try:
