@@ -26,9 +26,9 @@ CWA_TYPHOON_API_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034
 # 中央氣象署 RSS 警報特報服務 (提供XML格式的最新氣象特報)
 CWA_RSS_WARNING_URL = 'https://www.cwa.gov.tw/rss/Data/cwa_warning.xml'
 
-# Tropical Tidbits JTWC 數據基礎 URL (用於解析 JTWC 的 ATCF 數據)
-# 這個網站會聚合 JTWC 的數據並提供相對穩定的訪問
-TROPICAL_TIDBITS_JTWC_BASE_URL = 'https://www.tropicaltidbits.com/file/atcf/jtwc/'
+# NRL Monterey JTWC 數據基礎 URL (用於解析 JTWC 的 ATCF 數據)
+# 這是 JTWC ATCF 數據的一個穩定歸檔來源
+NRL_MONTEREY_JTWC_BASE_URL = 'https://www.nrlmry.navy.mil/atcf_web/data/'
 
 @app.route('/get-typhoon-data', methods=['GET'])
 def get_typhoon_data():
@@ -133,7 +133,7 @@ def get_cwa_warnings():
 @app.route('/get-international-typhoon-data', methods=['GET'])
 def get_international_typhoon_data():
     """
-    這個路由會作為前端網頁的代理，去 Tropical Tidbits 獲取 JTWC 的原始颱風數據。
+    這個路由會作為前端網頁的代理，從 NRL Monterey 獲取 JTWC 的原始 ATCF 數據。
     它會解析 ATCF 格式的文本數據，並將其轉換成結構化的 JSON 格式返回給前端。
     """
     print("Received request for /get-international-typhoon-data")
@@ -141,40 +141,16 @@ def get_international_typhoon_data():
     # 定義時區為 UTC
     utc_now = datetime.now(pytz.utc)
     
-    # JTWC 數據通常在 00Z, 06Z, 12Z, 18Z 發布
-    # 我們嘗試獲取最近的發布時間點
-    # 考慮到數據發布可能會有延遲，我們嘗試當前時間點和前幾個時間點
-    
-    # 嘗試的時間點 (UTC)
-    forecast_hours = [0, 6, 12, 18]
-    
-    # 構建可能的文件 URL 列表，從最新的時間點開始嘗試
+    # 構建可能的文件 URL 列表，從最新的年份開始嘗試
     possible_urls = []
     
-    # 嘗試當天的四個時間點
-    for i in range(2): # 嘗試今天和昨天
-        date_to_check = utc_now - timedelta(days=i)
-        for hour in forecast_hours:
-            # 找到最接近當前時間的過去發布時間
-            if i == 0 and hour > utc_now.hour: # 如果是今天，且小時數還沒到，則跳過
-                continue
-            
-            # 構建時間字串，例如 2025071700
-            dt_str = date_to_check.strftime('%Y%m%d') + f'{hour:02d}'
-            
-            # 構建完整的 URL
-            url = f"{TROPICAL_TIDBITS_JTWC_BASE_URL}{date_to_check.year}/{dt_str}_jtwc.dat"
-            possible_urls.append(url)
-            
-            # 對於當前小時，也嘗試前一個發布時間點，以防最新數據還沒上線
-            if i == 0 and hour == utc_now.hour:
-                prev_hour_idx = (forecast_hours.index(hour) - 1 + len(forecast_hours)) % len(forecast_hours)
-                prev_hour = forecast_hours[prev_hour_idx]
-                prev_dt_str = date_to_check.strftime('%Y%m%d') + f'{prev_hour:02d}'
-                prev_url = f"{TROPICAL_TIDBITS_JTWC_BASE_URL}{date_to_check.year}/{prev_dt_str}_jtwc.dat"
-                if prev_url not in possible_urls: # 避免重複添加
-                    possible_urls.append(prev_url)
-
+    # 嘗試獲取當前年份和前一年的數據
+    for year_offset in range(2): # 0 for current year, 1 for previous year
+        target_year = utc_now.year - year_offset
+        # 西太平洋盆地 (WP) 的 ATCF 數據檔案通常是 wpYYYY.dat
+        url = f"{NRL_MONTEREY_JTWC_BASE_URL}{target_year}/wp{target_year}.dat"
+        possible_urls.append(url)
+        
     # 嘗試獲取數據，從最新的 URL 開始
     for url in possible_urls:
         print(f"嘗試從 {url} 獲取國際颱風數據...")
@@ -315,7 +291,7 @@ def parse_jtwc_atcf(atcf_text):
 
             # 判斷是歷史路徑還是預測路徑
             # 'BEST' 通常代表最佳路徑 (已分析的歷史數據)
-            # 'P' 或其他技術代碼代表預測 (例如 'PROB', 'OFCL', 'CIMH' 等)
+            # 'P' 或其他技術代碼代表預測 (例如 'PROB', 'OFCL', 'CIMH', 'JTWC')
             technique = parts[3].strip()
 
             point = {
