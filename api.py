@@ -27,11 +27,10 @@ CWA_TYPHOON_API_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034
 # 中央氣象署 RSS 警報特報服務 (提供XML格式的最新氣象特報)
 CWA_RSS_WARNING_URL = 'https://www.cwa.gov.tw/rss/Data/cwa_warning.xml'
 
-# 國家科學及技術委員會開放資料平台 - 颱風相關數據索引 CSV URL (來自使用者提供)
-# *** 修正點：現在從您自己的 GitHub 倉庫獲取這個 CSV 檔案 ***
+# *** 新增：直接從您 GitHub 倉庫中獲取 KML 檔案的 URL ***
 # 請將 'wdfwfs' 替換為您的 GitHub 帳號，'typhoon-info-hub' 替換為您的倉庫名稱
-# 假設您將 CSV 儲存在倉庫的 'data/' 目錄下
-NSTC_OPENDATA_CSV_URL = "https://raw.githubusercontent.com/wdfwfs/typhoon-info-hub/main/data/nstc_typhoon_index.csv"
+# 假設 KML 檔案將由 GitHub Actions 儲存在倉庫的 'data/' 目錄下，並命名為 'typhoon_track.kml'
+NSTC_OPENDATA_KML_URL = "https://raw.githubusercontent.com/st107085/typhoon-info-hub/main/data/typhoon_track.kml"
 
 
 @app.route('/get-typhoon-data', methods=['GET'])
@@ -210,104 +209,45 @@ def parse_kml_data(kml_text):
 @app.route('/get-international-typhoon-data', methods=['GET'])
 def get_international_typhoon_data():
     """
-    這個端點將從您 GitHub 倉庫中的 NSTC 颱風數據索引 CSV 獲取數據，
-    然後從 CSV 中找到實際的 KML 連結，並解析 KML 數據。
+    這個端點將從您 GitHub 倉庫中的 KML 檔案獲取數據，並解析 KML 數據。
     """
-    print("Received request for /get-international-typhoon-data (NSTC OpenData CSV from GitHub)")
+    print("Received request for /get-international-typhoon-data (KML from GitHub)")
 
     try:
-        # 1. 從您自己的 GitHub 倉庫下載 NSTC 開放資料平台的 CSV 索引檔案
-        print(f"Attempting to fetch CSV from GitHub: {NSTC_OPENDATA_CSV_URL}")
+        # 1. 從您自己的 GitHub 倉庫下載 KML 檔案
+        print(f"Attempting to fetch KML from GitHub: {NSTC_OPENDATA_KML_URL}")
         # 從 GitHub raw 檔案獲取數據是安全的，不需要禁用 SSL 驗證 (verify=True 是預設值)
-        csv_response = requests.get(NSTC_OPENDATA_CSV_URL, timeout=15) 
-        csv_response.raise_for_status() # 檢查 HTTP 錯誤
-        print(f"Successfully fetched CSV from GitHub. Status: {csv_response.status_code}")
-        
-        # 使用 io.StringIO 將字串內容模擬成檔案，以便 csv.reader 讀取
-        # 由於 CSV 可能包含 BOM，嘗試使用 'utf-8-sig' 或 'big5'
-        csv_content = csv_response.text
-        try:
-            csv_file = io.StringIO(csv_content)
-            reader = csv.reader(csv_file)
-            header = next(reader) # 讀取標頭行
-            print(f"CSV Header: {header}")
-        except Exception as e:
-            print(f"Initial CSV parsing failed (UTF-8). Trying Big5. Error: {e}")
-            try:
-                csv_file = io.StringIO(csv_content.encode('latin-1').decode('big5')) # 嘗試 Big5 解碼
-                reader = csv.reader(csv_file)
-                header = next(reader)
-                print(f"CSV Header (Big5): {header}")
-            except Exception as e_big5:
-                print(f"CSV parsing failed for both UTF-8 and Big5. Error: {e_big5}")
-                raise ValueError("無法正確解析 NSTC 開放資料平台 CSV 檔案編碼。")
-
-
-        data_link_index = -1
-        description_index = -1
-
-        # 找到 '資料連結' 和 '說明' 欄位的索引
-        try:
-            data_link_index = header.index('資料連結')
-            description_index = header.index('說明')
-        except ValueError as e:
-            print(f"CSV 標頭中未找到 '資料連結' 或 '說明' 欄位。錯誤: {e}")
-            return jsonify({"success": False, "message": "NSTC 開放資料平台 CSV 格式不符預期 (缺少必要欄位)。"}), 500
-
-        kml_data_url = None
-        # 2. 遍歷 CSV 內容，尋找包含颱風路徑的連結
-        for i, row in enumerate(reader):
-            print(f"Processing CSV row {i+1}: {row}")
-            if len(row) > max(data_link_index, description_index):
-                description = row[description_index]
-                # 關鍵字搜尋更寬鬆，以防描述文字變化
-                if any(keyword in description for keyword in ["颱風路徑", "熱帶氣旋", "預測路徑", "Typhoon Track", "Typhoon_KML"]):
-                    kml_data_url = row[data_link_index]
-                    print(f"在 CSV 中找到颱風路徑連結: {kml_data_url}")
-                    break
-            else:
-                print(f"Skipping malformed CSV row {i+1} (not enough columns): {row}")
-        
-        if not kml_data_url:
-            print("在 NSTC 開放資料平台 CSV 中未找到任何颱風路徑的資料連結。")
-            return jsonify({"success": False, "message": "目前沒有活躍的國際颱風數據，或無法從來源獲取（NSTC：未找到路徑連結）。"}), 200
-
-        # 3. 從找到的 KML 連結下載實際的颱風數據
-        print(f"嘗試從找到的 KML URL 獲取數據: {kml_data_url}")
-        # *** 注意：這裡仍然需要為 KML_data_url 請求禁用 SSL 驗證 ***
-        # 因為這個 KML 連結可能仍然指向 mas.nstc.gov.tw
-        kml_response = requests.get(kml_data_url, timeout=30, verify=False) 
+        kml_response = requests.get(NSTC_OPENDATA_KML_URL, timeout=15)
         kml_response.raise_for_status() # 檢查 HTTP 錯誤
-        print(f"Successfully fetched KML from {kml_data_url}. Status: {kml_response.status_code}")
-        
-        kml_data = kml_response.text
-        
-        if not kml_data.strip():
-            print(f"從 {kml_data_url} 獲取的 KML 數據為空。")
-            return jsonify({"success": False, "message": "從 NSTC 獲取到 KML 數據，但內容為空。"}), 200
+        print(f"Successfully fetched KML from GitHub. Status: {kml_response.status_code}")
 
-        # 4. 解析 KML 數據
+        kml_data = kml_response.text
+
+        if not kml_data.strip():
+            print(f"從 {NSTC_OPENDATA_KML_URL} 獲取的 KML 數據為空。")
+            return jsonify({"success": False, "message": "從 GitHub 獲取到 KML 數據，但內容為空。"}), 200
+
+        # 2. 解析 KML 數據
         typhoon_paths = parse_kml_data(kml_data)
-        
+
         if typhoon_paths:
-            print(f"成功從 {kml_data_url} 獲取並解析國際颱風數據。")
+            print(f"成功從 {NSTC_OPENDATA_KML_URL} 獲取並解析國際颱風數據。")
             return jsonify({"success": True, "typhoonPaths": typhoon_paths})
         else:
             print("從獲取的 KML 數據中未找到任何颱風路徑資訊。")
-            return jsonify({"success": False, "message": "從 NSTC 獲取到 KML 數據，但未找到任何颱風路徑資訊。"}), 200
+            return jsonify({"success": False, "message": "從 GitHub 獲取到 KML 數據，但未找到任何颱風路徑資訊。"}), 200
 
     except requests.exceptions.Timeout:
-        print(f"獲取 NSTC 數據超時。")
+        print(f"獲取 KML 數據超時。")
         return jsonify({"success": False, "error": "獲取國際颱風數據超時，請稍後再試。"}), 504
     except requests.exceptions.RequestException as e:
-        print(f"從 NSTC 獲取數據失敗: {e}")
-        return jsonify({"success": False, "error": f"無法從 NSTC 獲取國際颱風數據: {str(e)}"}), 500
+        print(f"從 GitHub 獲取 KML 數據失敗: {e}")
+        # 這裡的錯誤應該是因為 KML 檔案不存在或無法從 GitHub 獲取，而不是 SSL 錯誤
+        # 如果 KML 檔案還沒被 GitHub Actions 推送，這裡就會報 404
+        return jsonify({"success": False, "error": f"無法從 GitHub 獲取國際颱風數據: {str(e)}"}), 500
     except ET.ParseError as e:
         print(f"解析 KML 數據失敗: {e}. 原始 KML 開頭: {kml_data[:500] if 'kml_data' in locals() else 'N/A'}")
         return jsonify({"success": False, "error": f"解析國際颱風 KML 數據失敗: {str(e)}"}), 500
-    except ValueError as e: # 捕獲 CSV 編碼或格式錯誤
-        print(f"CSV 處理錯誤: {e}")
-        return jsonify({"success": False, "error": f"處理 NSTC CSV 檔案時發生錯誤: {str(e)}"}), 500
     except Exception as e:
         print(f"處理國際颱風數據時發生未知錯誤: {e}")
         return jsonify({"success": False, "error": f"處理國際颱風數據時發生未知錯誤: {str(e)}"}), 500
