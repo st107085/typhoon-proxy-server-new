@@ -215,7 +215,8 @@ def get_international_typhoon_data():
     try:
         # 1. 下載 NSTC 開放資料平台的 CSV 索引檔案
         print(f"Attempting to fetch CSV from: {NSTC_OPENDATA_CSV_URL}")
-        csv_response = requests.get(NSTC_OPENDATA_CSV_URL, timeout=15)
+        # *** 修正點：為 NSTC_OPENDATA_CSV_URL 請求禁用 SSL 驗證 ***
+        csv_response = requests.get(NSTC_OPENDATA_CSV_URL, timeout=15, verify=False) 
         csv_response.raise_for_status() # 檢查 HTTP 錯誤
         print(f"Successfully fetched CSV. Status: {csv_response.status_code}")
         
@@ -269,7 +270,8 @@ def get_international_typhoon_data():
 
         # 3. 從找到的 KML 連結下載實際的颱風數據
         print(f"嘗試從找到的 KML URL 獲取數據: {kml_data_url}")
-        kml_response = requests.get(kml_data_url, timeout=30) # 增加超時時間
+        # *** 修正點：為 KML_data_url 請求禁用 SSL 驗證 ***
+        kml_response = requests.get(kml_data_url, timeout=30, verify=False) 
         kml_response.raise_for_status() # 檢查 HTTP 錯誤
         print(f"Successfully fetched KML from {kml_data_url}. Status: {kml_response.status_code}")
         
