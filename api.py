@@ -28,7 +28,10 @@ CWA_TYPHOON_API_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034
 CWA_RSS_WARNING_URL = 'https://www.cwa.gov.tw/rss/Data/cwa_warning.xml'
 
 # 國家科學及技術委員會開放資料平台 - 颱風相關數據索引 CSV URL (來自使用者提供)
-NSTC_OPENDATA_CSV_URL = "https://mas.nstc.gov.tw/OPENDATA/GetFile?format=csv&serialno=454&fileodr=1"
+# *** 修正點：現在從您自己的 GitHub 倉庫獲取這個 CSV 檔案 ***
+# 請將 'wdfwfs' 替換為您的 GitHub 帳號，'typhoon-info-hub' 替換為您的倉庫名稱
+# 假設您將 CSV 儲存在倉庫的 'data/' 目錄下
+NSTC_OPENDATA_CSV_URL = "https://raw.githubusercontent.com/wdfwfs/typhoon-info-hub/main/data/nstc_typhoon_index.csv"
 
 
 @app.route('/get-typhoon-data', methods=['GET'])
@@ -207,18 +210,18 @@ def parse_kml_data(kml_text):
 @app.route('/get-international-typhoon-data', methods=['GET'])
 def get_international_typhoon_data():
     """
-    這個端點將從 NSTC 開放資料平台獲取颱風數據索引 CSV，
+    這個端點將從您 GitHub 倉庫中的 NSTC 颱風數據索引 CSV 獲取數據，
     然後從 CSV 中找到實際的 KML 連結，並解析 KML 數據。
     """
-    print("Received request for /get-international-typhoon-data (NSTC OpenData CSV)")
+    print("Received request for /get-international-typhoon-data (NSTC OpenData CSV from GitHub)")
 
     try:
-        # 1. 下載 NSTC 開放資料平台的 CSV 索引檔案
-        print(f"Attempting to fetch CSV from: {NSTC_OPENDATA_CSV_URL}")
-        # *** 修正點：為 NSTC_OPENDATA_CSV_URL 請求禁用 SSL 驗證 ***
-        csv_response = requests.get(NSTC_OPENDATA_CSV_URL, timeout=15, verify=False) 
+        # 1. 從您自己的 GitHub 倉庫下載 NSTC 開放資料平台的 CSV 索引檔案
+        print(f"Attempting to fetch CSV from GitHub: {NSTC_OPENDATA_CSV_URL}")
+        # 從 GitHub raw 檔案獲取數據是安全的，不需要禁用 SSL 驗證 (verify=True 是預設值)
+        csv_response = requests.get(NSTC_OPENDATA_CSV_URL, timeout=15) 
         csv_response.raise_for_status() # 檢查 HTTP 錯誤
-        print(f"Successfully fetched CSV. Status: {csv_response.status_code}")
+        print(f"Successfully fetched CSV from GitHub. Status: {csv_response.status_code}")
         
         # 使用 io.StringIO 將字串內容模擬成檔案，以便 csv.reader 讀取
         # 由於 CSV 可能包含 BOM，嘗試使用 'utf-8-sig' 或 'big5'
@@ -257,7 +260,8 @@ def get_international_typhoon_data():
             print(f"Processing CSV row {i+1}: {row}")
             if len(row) > max(data_link_index, description_index):
                 description = row[description_index]
-                if "颱風路徑" in description or "熱帶氣旋" in description or "預測路徑" in description or "Typhoon Track" in description:
+                # 關鍵字搜尋更寬鬆，以防描述文字變化
+                if any(keyword in description for keyword in ["颱風路徑", "熱帶氣旋", "預測路徑", "Typhoon Track", "Typhoon_KML"]):
                     kml_data_url = row[data_link_index]
                     print(f"在 CSV 中找到颱風路徑連結: {kml_data_url}")
                     break
@@ -270,7 +274,8 @@ def get_international_typhoon_data():
 
         # 3. 從找到的 KML 連結下載實際的颱風數據
         print(f"嘗試從找到的 KML URL 獲取數據: {kml_data_url}")
-        # *** 修正點：為 KML_data_url 請求禁用 SSL 驗證 ***
+        # *** 注意：這裡仍然需要為 KML_data_url 請求禁用 SSL 驗證 ***
+        # 因為這個 KML 連結可能仍然指向 mas.nstc.gov.tw
         kml_response = requests.get(kml_data_url, timeout=30, verify=False) 
         kml_response.raise_for_status() # 檢查 HTTP 錯誤
         print(f"Successfully fetched KML from {kml_data_url}. Status: {kml_response.status_code}")
