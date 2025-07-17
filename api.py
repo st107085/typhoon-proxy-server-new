@@ -223,160 +223,163 @@ def get_international_typhoon_data():
     這個端點將從 NCEP 的 FTP 伺服器獲取 JTWC 的 TCVITALS 檔案，
     並解析後返回其中一個（例如，最新的或第一個找到的）颱風路徑資料。
     """
-    # 獲取當前 UTC 時間
-    now_utc = datetime.now(timezone.utc)
+    print(f"嘗試從 NCEP FTP 獲取 JTWC 數據...")
     
-    # TCVITALS 檔案通常在 00Z, 06Z, 12Z, 18Z 更新。
-    # 我們需要找到最近的可用時間。
-    # 例如，如果現在是 09Z，我們應該嘗試獲取 06Z 的數據。
-    # 如果現在是 05Z，我們應該嘗試獲取前一天 18Z 的數據。
-    
-    # 計算最近的 6 小時間隔
-    # 將當前小時數除以 6，取整數，再乘以 6
-    # 例如 09Z -> 9/6 = 1.5 -> 1 * 6 = 06Z
-    # 例如 13Z -> 13/6 = 2.16 -> 2 * 6 = 12Z
-    # 如果結果小時數大於當前小時數，則回溯一天
-    
-    # 這裡我們直接嘗試當天和前一天的幾個常見時間點，以確保能找到最近的數據
-    possible_times = []
-    # 嘗試當天
-    for hour in [0, 6, 12, 18]:
-        dt_candidate = now_utc.replace(hour=hour, minute=0, second=0, microsecond=0)
-        if dt_candidate <= now_utc: # 只考慮過去或當前的時間點
-            possible_times.append(dt_candidate)
-    
-    # 嘗試前一天
-    yesterday_utc = now_utc - timedelta(days=1)
-    for hour in [0, 6, 12, 18]:
-        dt_candidate = yesterday_utc.replace(hour=hour, minute=0, second=0, microsecond=0)
-        possible_times.append(dt_candidate)
-
-    # 按時間倒序排序，從最新的時間點開始嘗試
-    possible_times.sort(reverse=True)
-
-    tcvitals_url = None
-    response = None
-    
-    for dt_to_fetch in possible_times:
-        date_str = dt_to_fetch.strftime('%Y%m%d')
-        hour_str = dt_to_fetch.strftime('%H')
+    try: # 外層 try block 開始
+        # 獲取當前 UTC 時間
+        now_utc = datetime.now(timezone.utc)
         
-        # 構建 TCVITALS 檔案的完整 URL
-        # 範例: https://ftpprd.ncep.noaa.gov/data/nccf/com/gfs/prod/gfs.20250717/gfs.t00z.syndata.tcvitals.tm00
-        tcvitals_url_candidate = f"{NCEP_TCVITALS_BASE_URL}gfs.{date_str}/gfs.t{hour_str}z.syndata.tcvitals.tm00"
-        print(f"嘗試從 NCEP FTP 獲取數據: {tcvitals_url_candidate}")
+        # TCVITALS 檔案通常在 00Z, 06Z, 12Z, 18Z 更新。
+        # 我們需要找到最近的可用時間。
+        # 例如，如果現在是 09Z，我們應該嘗試獲取 06Z 的數據。
+        # 如果現在是 05Z，我們應該嘗試獲取前一天 18Z 的數據。
+        
+        # 計算最近的 6 小時間隔
+        # 將當前小時數除以 6，取整數，再乘以 6
+        # 例如 09Z -> 9/6 = 1.5 -> 1 * 6 = 06Z
+        # 例如 13Z -> 13/6 = 2.16 -> 2 * 6 = 12Z
+        # 如果結果小時數大於當前小時數，則回溯一天
+        
+        # 這裡我們直接嘗試當天和前一天的幾個常見時間點，以確保能找到最近的數據
+        possible_times = []
+        # 嘗試當天
+        for hour in [0, 6, 12, 18]:
+            dt_candidate = now_utc.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if dt_candidate <= now_utc: # 只考慮過去或當前的時間點
+                possible_times.append(dt_candidate)
+        
+        # 嘗試前一天
+        yesterday_utc = now_utc - timedelta(days=1)
+        for hour in [0, 6, 12, 18]:
+            dt_candidate = yesterday_utc.replace(hour=hour, minute=0, second=0, microsecond=0)
+            possible_times.append(dt_candidate)
 
-        try:
-            # 對於 FTP 伺服器，通常不需要複雜的 HTTP 標頭
-            response = requests.get(tcvitals_url_candidate, timeout=15) # 增加超時設定
-            response.raise_for_status() # 檢查 HTTP 錯誤
+        # 按時間倒序排序，從最新的時間點開始嘗試
+        possible_times.sort(reverse=True)
+
+        tcvitals_url = None
+        response = None
+        
+        for dt_to_fetch in possible_times:
+            date_str = dt_to_fetch.strftime('%Y%m%d')
+            hour_str = dt_to_fetch.strftime('%H')
             
-            # 如果成功獲取，則使用這個 URL
-            tcvitals_url = tcvitals_url_candidate
-            print(f"成功獲取 TCVITALS 數據: {tcvitals_url}")
-            break # 找到第一個可用的檔案就停止
-        except requests.exceptions.RequestException as e:
-            print(f"從 {tcvitals_url_candidate} 獲取數據失敗: {e}")
-            # 繼續嘗試下一個時間點
-            response = None # 重置 response，避免使用舊的失敗響應
-            continue
+            # 構建 TCVITALS 檔案的完整 URL
+            # 範例: https://ftpprd.ncep.noaa.gov/data/nccf/com/gfs/prod/gfs.20250717/gfs.t00z.syndata.tcvitals.tm00
+            tcvitals_url_candidate = f"{NCEP_TCVITALS_BASE_URL}gfs.{date_str}/gfs.t{hour_str}z.syndata.tcvitals.tm00"
+            print(f"嘗試從 {tcvitals_url_candidate} 獲取數據...")
 
-    if not response:
-        print("未能從 NCEP FTP 獲取任何 TCVITALS 檔案。")
-        return jsonify({"success": False, "message": "未能從 NCEP FTP 獲取國際颱風資料，可能沒有活躍颱風數據或伺服器問題。"}), 500
+            try:
+                # 對於 FTP 伺服器，通常不需要複雜的 HTTP 標頭
+                response = requests.get(tcvitals_url_candidate, timeout=15) # 增加超時設定
+                response.raise_for_status() # 檢查 HTTP 錯誤
+                
+                # 如果成功獲取，則使用這個 URL
+                tcvitals_url = tcvitals_url_candidate
+                print(f"成功獲取 TCVITALS 數據: {tcvitals_url}")
+                break # 找到第一個可用的檔案就停止
+            except requests.exceptions.RequestException as e:
+                print(f"從 {tcvitals_url_candidate} 獲取數據失敗: {e}")
+                # 繼續嘗試下一個時間點
+                response = None # 重置 response，避免使用舊的失敗響應
+                continue
+
+        if not response:
+            print("未能從 NCEP FTP 獲取任何 TCVITALS 檔案。")
+            return jsonify({"success": False, "message": "未能從 NCEP FTP 獲取國際颱風資料，可能沒有活躍颱風數據或伺服器問題。"}), 500
 
 
-    atcf_lines = response.text.strip().split('\n')
-    print(f"成功獲取 TCVITALS 數據，共 {len(atcf_lines)} 行。")
-    
-    # 用於儲存所有解析後的颱風數據，按 ID 分組
-    all_typhoons_parsed_data = {}
+        atcf_lines = response.text.strip().split('\n')
+        print(f"成功獲取 TCVITALS 數據，共 {len(atcf_lines)} 行。")
+        
+        # 用於儲存所有解析後的颱風數據，按 ID 分組
+        all_typhoons_parsed_data = {}
 
-    for line_num, line in enumerate(atcf_lines):
-        # 跳過註解行 (通常以 # 或空白開頭)
-        if not line.strip() or line.strip().startswith('#'):
-            continue
+        for line_num, line in enumerate(atcf_lines):
+            # 跳過註解行 (通常以 # 或空白開頭)
+            if not line.strip() or line.strip().startswith('#'):
+                continue
 
-        parsed_point = parse_atcf_line(line)
-        if parsed_point:
-            cyclone_id = parsed_point["cycloneId"]
-            typhoon_name = parsed_point["typhoonName"]
+            parsed_point = parse_atcf_line(line)
+            if parsed_point:
+                cyclone_id = parsed_point["cycloneId"]
+                typhoon_name = parsed_point["typhoonName"]
 
-            if cyclone_id not in all_typhoons_parsed_data:
-                all_typhoons_parsed_data[cyclone_id] = {
-                    "pastTrack": [],
-                    "forecastTrack": [],
-                    "currentPosition": None,
-                    "name": typhoon_name, # 使用 ATCF 中解析出的名稱
-                    "id": cyclone_id,
-                    "agency": "JTWC (via NCEP)" # 標記數據來源
-                }
-            
-            # 根據預報時效分類數據點
-            if parsed_point["forecastPeriod_hours"] == 0:
-                all_typhoons_parsed_data[cyclone_id]["pastTrack"].append({
-                    "lat": parsed_point["lat"],
-                    "lon": parsed_point["lon"],
-                    "time": parsed_point["time"],
-                    "windSpeed_knots": parsed_point["windSpeed_knots"],
-                    "windSpeed_ms": parsed_point["windSpeed_ms"],
-                    "pressure_hpa": parsed_point["pressure_hpa"]
-                })
-                # 更新當前位置為最新的 00 小時點
-                # 注意：這裡假設 00 小時預報是按時間順序出現的，最後一個就是當前位置
-                all_typhoons_parsed_data[cyclone_id]["currentPosition"] = {
-                    "lat": parsed_point["lat"],
-                    "lon": parsed_point["lon"],
-                    "time": parsed_point["time"],
-                    "windSpeed_knots": parsed_point["windSpeed_knots"],
-                    "windSpeed_ms": parsed_point["windSpeed_ms"],
-                    "pressure_hpa": parsed_point["pressure_hpa"]
-                }
-            elif parsed_point["forecastPeriod_hours"] > 0:
-                all_typhoons_parsed_data[cyclone_id]["forecastTrack"].append({
-                    "lat": parsed_point["lat"],
-                    "lon": parsed_point["lon"],
-                    "time": parsed_point["time"],
-                    "windSpeed_knots": parsed_point["windSpeed_knots"],
-                    "windSpeed_ms": parsed_point["windSpeed_ms"],
-                    "pressure_hpa": parsed_point["pressure_hpa"],
-                    "forecastPeriod_hours": parsed_point["forecastPeriod_hours"]
-                })
+                if cyclone_id not in all_typhoons_parsed_data:
+                    all_typhoons_parsed_data[cyclone_id] = {
+                        "pastTrack": [],
+                        "forecastTrack": [],
+                        "currentPosition": None,
+                        "name": typhoon_name, # 使用 ATCF 中解析出的名稱
+                        "id": cyclone_id,
+                        "agency": "JTWC (via NCEP)" # 標記數據來源
+                    }
+                
+                # 根據預報時效分類數據點
+                if parsed_point["forecastPeriod_hours"] == 0:
+                    all_typhoons_parsed_data[cyclone_id]["pastTrack"].append({
+                        "lat": parsed_point["lat"],
+                        "lon": parsed_point["lon"],
+                        "time": parsed_point["time"],
+                        "windSpeed_knots": parsed_point["windSpeed_knots"],
+                        "windSpeed_ms": parsed_point["windSpeed_ms"],
+                        "pressure_hpa": parsed_point["pressure_hpa"]
+                    })
+                    # 更新當前位置為最新的 00 小時點
+                    # 注意：這裡假設 00 小時預報是按時間順序出現的，最後一個就是當前位置
+                    all_typhoons_parsed_data[cyclone_id]["currentPosition"] = {
+                        "lat": parsed_point["lat"],
+                        "lon": parsed_point["lon"],
+                        "time": parsed_point["time"],
+                        "windSpeed_knots": parsed_point["windSpeed_knots"],
+                        "windSpeed_ms": parsed_point["windSpeed_ms"],
+                        "pressure_hpa": parsed_point["pressure_hpa"]
+                    }
+                elif parsed_point["forecastPeriod_hours"] > 0:
+                    all_typhoons_parsed_data[cyclone_id]["forecastTrack"].append({
+                        "lat": parsed_point["lat"],
+                        "lon": parsed_point["lon"],
+                        "time": parsed_point["time"],
+                        "windSpeed_knots": parsed_point["windSpeed_knots"],
+                        "windSpeed_ms": parsed_point["windSpeed_ms"],
+                        "pressure_hpa": parsed_point["pressure_hpa"],
+                        "forecastPeriod_hours": parsed_point["forecastPeriod_hours"]
+                    })
+            else:
+                print(f"警告: 無法解析 TCVITALS 檔案中第 {line_num + 1} 行的數據: {line.strip()}")
+        
+        # 選擇一個颱風來顯示。如果有多個，我們選擇 ID 最大的那個 (通常是最新生成的颱風)
+        # 確保選中的颱風有數據
+        if all_typhoons_parsed_data:
+            # 找到 ID 最大的颱風 (例如 'WP152025' 會比 'WP142025' 大)
+            selected_typhoon_id = max(all_typhoons_parsed_data.keys())
+            selected_typhoon = all_typhoons_parsed_data[selected_typhoon_id]
+
+            # 對 pastTrack 和 forecastTrack 進行時間排序，確保路徑正確
+            selected_typhoon["pastTrack"].sort(key=lambda x: x["time"])
+            selected_typhoon["forecastTrack"].sort(key=lambda x: x["time"])
+
+            # 確保 currentPosition 是 pastTrack 中最新的點
+            if selected_typhoon["pastTrack"]:
+                selected_typhoon["currentPosition"] = selected_typhoon["pastTrack"][-1]
+            else:
+                selected_typhoon["currentPosition"] = None # 如果沒有歷史點，則沒有當前位置
+
+            print(f"返回 JTWC 颱風數據: {selected_typhoon['name']} ({selected_typhoon['id']})")
+            return jsonify({"success": True, "typhoon": selected_typhoon})
         else:
-            print(f"警告: 無法解析 TCVITALS 檔案中第 {line_num + 1} 行的數據: {line.strip()}")
-    
-    # 選擇一個颱風來顯示。如果有多個，我們選擇 ID 最大的那個 (通常是最新生成的颱風)
-    # 確保選中的颱風有數據
-    if all_typhoons_parsed_data:
-        # 找到 ID 最大的颱風 (例如 'WP152025' 會比 'WP142025' 大)
-        selected_typhoon_id = max(all_typhoons_parsed_data.keys())
-        selected_typhoon = all_typhoons_parsed_data[selected_typhoon_id]
+            # 如果 TCVITALS 檔案中沒有找到任何活躍熱帶氣旋數據
+            print("NCEP TCVITALS 檔案中沒有找到活躍的熱帶氣旋數據。")
+            return jsonify({"success": False, "message": "NCEP TCVITALS 檔案中沒有找到活躍的熱帶氣旋數據。"}), 200 # 返回 200 但說明沒有數據
 
-        # 對 pastTrack 和 forecastTrack 進行時間排序，確保路徑正確
-        selected_typhoon["pastTrack"].sort(key=lambda x: x["time"])
-        selected_typhoon["forecastTrack"].sort(key=lambda x: x["time"])
-
-        # 確保 currentPosition 是 pastTrack 中最新的點
-        if selected_typhoon["pastTrack"]:
-            selected_typhoon["currentPosition"] = selected_typhoon["pastTrack"][-1]
-        else:
-            selected_typhoon["currentPosition"] = None # 如果沒有歷史點，則沒有當前位置
-
-        print(f"返回 JTWC 颱風數據: {selected_typhoon['name']} ({selected_typhoon['id']})")
-        return jsonify({"success": True, "typhoon": selected_typhoon})
-    else:
-        # 如果 TCVITALS 檔案中沒有找到任何活躍熱帶氣旋數據
-        print("NCEP TCVITALS 檔案中沒有找到活躍的熱帶氣旋數據。")
-        return jsonify({"success": False, "message": "NCEP TCVITALS 檔案中沒有找到活躍的熱帶氣旋數據。"}), 200 # 返回 200 但說明沒有數據
-
-except requests.exceptions.RequestException as e:
-    print(f"獲取 NCEP TCVITALS 數據失敗: {e}")
-    traceback.print_exc() # 打印完整的錯誤堆疊資訊
-    return jsonify({"success": False, "message": f"無法從 NCEP FTP 獲取國際颱風資料: {e}"}), 500
-except Exception as e:
-    print(f"處理 NCEP TCVITALS 數據時發生錯誤: {e}")
-    traceback.print_exc() # 打印完整的錯誤堆疊資訊
-    return jsonify({"success": False, "message": f"處理國際颱風資料失敗: {e}"}), 500
+    except requests.exceptions.RequestException as e: # 外層 requests 錯誤處理
+        print(f"獲取 NCEP TCVITALS 數據失敗: {e}")
+        traceback.print_exc() # 打印完整的錯誤堆疊資訊
+        return jsonify({"success": False, "message": f"無法從 NCEP FTP 獲取國際颱風資料: {e}"}), 500
+    except Exception as e: # 外層通用錯誤處理
+        print(f"處理 NCEP TCVITALS 數據時發生錯誤: {e}")
+        traceback.print_exc() # 打印完整的錯誤堆疊資訊
+        return jsonify({"success": False, "message": f"處理國際颱風資料失敗: {e}"}), 500
 
 if __name__ == '__main__':
     # 在本地運行時，將 host 設定為 '0.0.0.0' 以便外部訪問
