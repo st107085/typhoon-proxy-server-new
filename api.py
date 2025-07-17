@@ -26,10 +26,8 @@ CWA_TYPHOON_API_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034
 # 中央氣象署 RSS 警報特報服務 (提供XML格式的最新氣象特報)
 CWA_RSS_WARNING_URL = 'https://www.cwa.gov.tw/rss/Data/cwa_warning.xml'
 
-# NRL Monterey JTWC 數據基礎 URL (用於解析 JTWC 的 ATCF 數據)
-# 這是 JTWC ATCF 數據的一個穩定歸檔來源
-# *** 修正點：更新為正確的 NRL Monterey ATCF 數據基礎 URL ***
-NRL_MONTEREY_JTWC_BASE_URL = 'https://science.nrlmry.navy.mil/atcf/data/'
+# NCDR 各國預報路徑 KML URL
+NCDR_MULTITY_ROUTE_KML_URL = "https://satis.ncdr.nat.gov.tw/kml/multityroute.aspx"
 
 @app.route('/get-typhoon-data', methods=['GET'])
 def get_typhoon_data():
@@ -135,225 +133,92 @@ def get_cwa_warnings():
 @app.route('/get-international-typhoon-data', methods=['GET'])
 def get_international_typhoon_data():
     """
-    這個路由會作為前端網頁的代理，從 NRL Monterey 獲取 JTWC 的原始 ATCF 數據。
-    它會解析 ATCF 格式的文本數據，並將其轉換成結構化的 JSON 格式返回給前端。
+    這個路由會作為前端網頁的代理，從 NCDR KML 服務獲取各國颱風預測路徑。
+    它會解析 KML 格式的數據，並將其轉換成結構化的 JSON 格式返回給前端。
     """
-    print("Received request for /get-international-typhoon-data")
+    print("Received request for /get-international-typhoon-data (NCDR KML)")
     
-    # 定義時區為 UTC
-    utc_now = datetime.now(pytz.utc)
-    
-    # 構建可能的文件 URL 列表，從最新的年份開始嘗試
-    possible_urls = []
-    
-    # 嘗試獲取當前年份和前一年的數據
-    for year_offset in range(2): # 0 for current year, 1 for previous year
-        target_year = utc_now.year - year_offset
-        # 西太平洋盆地 (WP) 的 ATCF 數據檔案通常是 wpYYYY.dat
-        url = f"{NRL_MONTEREY_JTWC_BASE_URL}{target_year}/wp{target_year}.dat"
-        possible_urls.append(url)
+    try:
+        # 獲取 NCDR 的 KML 數據
+        # NCDR 的 KML 服務通常憑證是有效的，不需要禁用 SSL 驗證
+        response = requests.get(NCDR_MULTITY_ROUTE_KML_URL, timeout=15)
+        response.raise_for_status() # 檢查 HTTP 狀態碼，如果不是 200 則拋出異常
         
-    # 嘗試獲取數據，從最新的 URL 開始
-    atcf_data = None
-    for url in possible_urls:
-        print(f"嘗試從 {url} 獲取國際颱風數據...")
-        try:
-            # 添加 verify=False 來禁用 SSL 憑證驗證
-            response = requests.get(url, timeout=15, verify=False) 
-            response.raise_for_status() # 檢查 HTTP 狀態碼，如果不是 200 則拋出異常
-            
-            atcf_data = response.text
-            
-            # 檢查數據是否為空或無效
-            if not atcf_data.strip():
-                print(f"從 {url} 獲取的數據為空，嘗試下一個 URL。")
-                atcf_data = None # 重置為 None，繼續嘗試下一個 URL
-                continue 
-            
-            print(f"成功從 {url} 獲取數據。")
-            break # 成功獲取到數據，跳出循環
-        except requests.exceptions.Timeout:
-            print(f"從 {url} 獲取數據超時，嘗試下一個 URL。")
-            atcf_data = None
-            continue 
-        except requests.exceptions.RequestException as e:
-            print(f"從 {url} 獲取數據失敗: {e}，嘗試下一個 URL。")
-            atcf_data = None
-            continue 
-        except Exception as e:
-            print(f"處理 {url} 數據時發生錯誤: {e}，嘗試下一個 URL。")
-            atcf_data = None
-            continue 
-            
-    if not atcf_data:
-        print("所有嘗試的國際颱風數據 URL 都無法獲取。")
-        return jsonify({"success": False, "message": "目前沒有活躍的國際颱風數據，或無法從來源獲取。"}), 200
+        kml_data = response.text
+        
+        # 檢查數據是否為空或無效
+        if not kml_data.strip():
+            print(f"從 {NCDR_MULTITY_ROUTE_KML_URL} 獲取的 KML 數據為空。")
+            return jsonify({"success": False, "message": "無法從 NCDR 獲取 KML 數據或數據為空。"}), 200
 
-    # 解析 ATCF 數據
-    all_typhoons_data = parse_jtwc_atcf(atcf_data)
-    
-    if not all_typhoons_data:
-        print("從獲取的數據中未找到活躍颱風資訊。")
-        return jsonify({"success": False, "message": "從來源獲取到數據，但未找到活躍的國際颱風資訊。"}), 200
+        # 解析 KML 數據
+        typhoon_paths = parse_ncdr_kml(kml_data)
+        
+        if typhoon_paths:
+            print(f"成功從 {NCDR_MULTITY_ROUTE_KML_URL} 獲取並解析國際颱風數據。")
+            return jsonify({"success": True, "typhoonPaths": typhoon_paths})
+        else:
+            print("從獲取的 KML 數據中未找到任何颱風路徑資訊。")
+            return jsonify({"success": False, "message": "從 NCDR 獲取到 KML 數據，但未找到任何颱風路徑資訊。"}), 200
 
-    # 從所有解析到的颱風中，選擇最新的、有當前位置數據的颱風
-    latest_typhoon = None
-    for typhoon_id, typhoon_info in all_typhoons_data.items():
-        if typhoon_info["currentPosition"]: # 優先選擇有明確當前位置的颱風
-            if latest_typhoon is None or \
-               (typhoon_info["currentPosition"]["time"] and \
-                latest_typhoon["currentPosition"] and \
-                typhoon_info["currentPosition"]["time"] > latest_typhoon["currentPosition"]["time"]):
-                latest_typhoon = typhoon_info
-        elif typhoon_info["pastTrack"]: # 如果沒有明確當前位置，選擇有歷史軌跡的最新颱風
-             if latest_typhoon is None or \
-                (typhoon_info["pastTrack"][-1]["time"] and \
-                 latest_typhoon["pastTrack"] and \
-                 typhoon_info["pastTrack"][-1]["time"] > latest_typhoon["pastTrack"][-1]["time"]):
-                 latest_typhoon = typhoon_info
+    except requests.exceptions.Timeout:
+        print(f"從 {NCDR_MULTITY_ROUTE_KML_URL} 獲取數據超時。")
+        return jsonify({"success": False, "error": "獲取國際颱風 KML 數據超時，請稍後再試。"}), 504
+    except requests.exceptions.RequestException as e:
+        print(f"從 {NCDR_MULTITY_ROUTE_KML_URL} 獲取數據失敗: {e}")
+        return jsonify({"success": False, "error": f"無法獲取國際颱風 KML 數據: {str(e)}"}), 500
+    except ET.ParseError as e:
+        print(f"解析 NCDR KML 數據失敗: {e}")
+        return jsonify({"success": False, "error": f"解析國際颱風 KML 數據失敗: {str(e)}"}), 500
+    except Exception as e:
+        print(f"處理國際颱風 KML 數據時發生錯誤: {e}")
+        return jsonify({"success": False, "error": f"處理國際颱風 KML 數據失敗: {str(e)}"}), 500
 
-    if latest_typhoon:
-        print(f"成功獲取並解析國際颱風數據，顯示颱風: {latest_typhoon['name']} ({latest_typhoon['id']})")
-        return jsonify({"success": True, "typhoon": latest_typhoon})
-    else:
-        print("從獲取的數據中未找到最新的活躍颱風資訊。")
-        return jsonify({"success": False, "message": "從來源獲取到數據，但未找到最新的活躍國際颱風資訊。"}), 200
-
-def parse_jtwc_atcf(atcf_text):
+def parse_ncdr_kml(kml_text):
     """
-    解析 JTWC 的 ATCF 文本數據，提取所有颱風資訊。
-    ATCF 數據格式非常複雜，這裡只提取必要的路徑點資訊。
-    每行數據由逗號分隔，包含多個欄位。
-    我們主要關心以下欄位（索引可能因 ATCF 版本而異，這裡基於常見格式）：
-    0: Basin (盆地)
-    1: Cyclone Number (氣旋編號)
-    2: YYYYMMDDHH (時間)
-    3: Technique (預報技術)
-    4: Forecast Period (預報時效)
-    5: Lat (緯度)
-    6: Lon (經度)
-    7: Max Sustained Wind (最大持續風速，節)
-    8: Minimum Sea Level Pressure (最低海平面氣壓，百帕)
-    ... (其他欄位)
+    解析 NCDR KML 數據，提取颱風路徑資訊。
+    預期 KML 包含多個 Placemark，每個 Placemark 可能代表一個預測模型路徑。
     """
-    lines = atcf_text.strip().split('\n')
+    root = ET.fromstring(kml_text)
     
-    if not lines:
-        return None
-
-    # 儲存所有颱風的數據，以颱風 ID 為鍵
-    all_typhoons_data = {} 
-
-    for line in lines:
-        parts = [p.strip() for p in line.split(',')]
-        
-        # ATCF 數據至少有 28 個欄位 (雖然我們只用前面幾個)
-        if len(parts) < 28: 
-            continue
-        
-        try:
-            basin = parts[0]
-            cyclone_num = parts[1]
-            typhoon_year = parts[2][0:4] # 從時間字串中提取年份
-            typhoon_id = f"{basin}{cyclone_num}{typhoon_year}" 
-
-            # 如果這個颱風還沒有被記錄，則初始化其數據結構
-            if typhoon_id not in all_typhoons_data:
-                all_typhoons_data[typhoon_id] = {
-                    "name": "未知颱風",
-                    "currentPosition": None,
-                    "pastTrack": [],
-                    "forecastTrack": [],
-                    "id": typhoon_id,
-                    "agency": "JTWC"
-                }
-
-            # 提取時間 (YYYYMMDDHH)
-            time_str = parts[2] # 例如 2025071700
-            
-            iso_time = None
-            if len(time_str) >= 10:
-                try:
-                    dt_object = datetime.strptime(time_str, '%Y%m%d%H')
-                    iso_time = dt_object.isoformat() + 'Z' # 加上 Z 表示 UTC 時間
-                except ValueError:
-                    # print(f"無法解析時間字串: {time_str}") # 偵錯用
-                    pass
-            
-            if iso_time is None:
-                continue # 無法解析時間，跳過此行
-
-            # 提取緯度 (Lat) 和經度 (Lon)
-            lat_raw = parts[5]
-            lon_raw = parts[6]
-
-            lat = float(lat_raw[:-1]) / 10.0 if lat_raw and lat_raw[-1] in ['N', 'S'] else None
-            if lat_raw and lat_raw.endswith('S'):
-                lat = -lat
-
-            lon = float(lon_raw[:-1]) / 10.0 if lon_raw and lon_raw[-1] in ['E', 'W'] else None
-            if lon_raw and lon_raw.endswith('W'):
-                lon = -lon
-            
-            if lat is None or lon is None:
-                continue # 跳過無效座標的行
-
-            # 提取最大持續風速 (Max Sustained Wind, 節)
-            wind_speed_knots = int(parts[7]) if parts[7].isdigit() else 0
-            wind_speed_ms = round(wind_speed_knots * 0.514444, 1) # 節轉換為公尺/秒
-
-            # 提取最低海平面氣壓 (Minimum Sea Level Pressure, 百帕)
-            pressure_hpa = int(parts[8]) if parts[8].isdigit() else 0
-
-            # 預報時效 (Forecast Period)，通常是 000, 012, 024, ...
-            forecast_period_str = parts[4]
-            forecast_period_hours = int(forecast_period_str) if forecast_period_str.isdigit() else 0
-
-            # 判斷是歷史路徑還是預測路徑
-            technique = parts[3].strip()
-
-            point = {
-                "time": iso_time,
-                "lat": lat,
-                "lon": lon,
-                "windSpeed_knots": wind_speed_knots,
-                "windSpeed_ms": wind_speed_ms,
-                "pressure_hpa": pressure_hpa,
-                "forecastPeriod_hours": forecast_period_hours
-            }
-
-            # 颱風名稱 (從 ATCF 數據的第 28 個欄位獲取，如果存在的話)
-            if len(parts) > 27 and parts[27].strip():
-                typhoon_name_from_data = parts[27].strip()
-                if typhoon_name_from_data != "INVEST": # 排除投資區的名稱
-                    all_typhoons_data[typhoon_id]["name"] = typhoon_name_from_data
-            elif all_typhoons_data[typhoon_id]["name"] == "未知颱風": # 如果還沒有設定過名稱，使用氣旋編號
-                 all_typhoons_data[typhoon_id]["name"] = f"TC {cyclone_num}"
-
-
-            # 判斷是過去路徑還是預測路徑
-            if technique == 'BEST':
-                all_typhoons_data[typhoon_id]["pastTrack"].append(point)
-                # 如果是 BEST 數據且預報時效為 0，則視為當前位置
-                if forecast_period_hours == 0:
-                    all_typhoons_data[typhoon_id]["currentPosition"] = point
-            else: # 其他技術代碼都是預測數據
-                all_typhoons_data[typhoon_id]["forecastTrack"].append(point)
-                # 如果還沒有設置當前位置，且這是第一個預測點的初始時間，可以考慮設為當前位置
-                if all_typhoons_data[typhoon_id]["currentPosition"] is None and forecast_period_hours == 0:
-                     all_typhoons_data[typhoon_id]["currentPosition"] = point
-
-        except (ValueError, IndexError) as e:
-            # print(f"解析 ATCF 行失敗: {line} - 錯誤: {e}") # 偵錯用
-            continue # 跳過無法解析的行
+    # KML 命名空間
+    ns = {'kml': 'http://www.opengis.net/kml/2.2'}
     
-    # 對每個颱風的路徑點進行排序
-    for typhoon_id in all_typhoons_data:
-        all_typhoons_data[typhoon_id]["pastTrack"].sort(key=lambda x: x["time"] if x["time"] else "")
-        all_typhoons_data[typhoon_id]["forecastTrack"].sort(key=lambda x: x["forecastPeriod_hours"])
+    typhoon_paths = []
 
-    return all_typhoons_data if all_typhoons_data else None
+    # 遍歷所有的 Placemark
+    for placemark in root.findall('.//kml:Placemark', ns):
+        name_element = placemark.find('kml:name', ns)
+        name = name_element.text if name_element is not None else "未知路徑"
+        
+        line_string_element = placemark.find('kml:LineString', ns)
+        if line_string_element is not None:
+            coordinates_element = line_string_element.find('kml:coordinates', ns)
+            if coordinates_element is not None and coordinates_element.text:
+                coords_text = coordinates_element.text.strip()
+                points = []
+                # KML 座標格式是 longitude,latitude,altitude，以空格分隔
+                for coord_str in coords_text.split(' '):
+                    try:
+                        # 分割經度、緯度、海拔
+                        parts = coord_str.split(',')
+                        if len(parts) >= 2: # 確保至少有經緯度
+                            lon = float(parts[0]) 
+                            lat = float(parts[1])
+                            points.append({"lat": lat, "lon": lon}) # Leaflet 期望 latitude,longitude
+                    except ValueError:
+                        continue # 跳過格式不正確的座標
+                
+                if points:
+                    typhoon_paths.append({
+                        "name": name,
+                        "path": points
+                    })
+    return typhoon_paths
 
+# 移除舊的 parse_jtwc_atcf 函數，因為它不再被使用
+# def parse_jtwc_atcf(atcf_text):
+#    ... (此處為舊的 JTWC ATCF 解析函數內容)
 
 if __name__ == '__main__':
     # 在本地運行時，Flask 應用會在 5000 端口上啟動
