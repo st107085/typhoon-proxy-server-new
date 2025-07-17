@@ -9,6 +9,7 @@ import requests # 用於發送 HTTP 請求到外部 API
 import json # 導入 json 模組用於解析錯誤訊息
 import xml.etree.ElementTree as ET # 用於解析 XML 格式的資料 (例如氣象特報 RSS)
 from datetime import datetime, timedelta
+import pytz # 導入 pytz 模組來處理時區問題
 
 app = Flask(__name__)
 CORS(app) # 允許所有來源的跨域請求。在實際部署時，為了安全考量，
@@ -25,9 +26,9 @@ CWA_TYPHOON_API_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0034
 # 中央氣象署 RSS 警報特報服務 (提供XML格式的最新氣象特報)
 CWA_RSS_WARNING_URL = 'https://www.cwa.gov.tw/rss/Data/cwa_warning.xml'
 
-# Tropical Tidbits JTWC 數據來源 (用於解析 JTWC 的 ATCF 數據)
+# Tropical Tidbits JTWC 數據基礎 URL (用於解析 JTWC 的 ATCF 數據)
 # 這個網站會聚合 JTWC 的數據並提供相對穩定的訪問
-TROPICAL_TIDBITS_JTWC_URL = 'https://www.tropicaltidbits.com/storminfo/latest_jtc.txt'
+TROPICAL_TIDBITS_JTWC_BASE_URL = 'https://www.tropicaltidbits.com/file/atcf/jtwc/'
 
 @app.route('/get-typhoon-data', methods=['GET'])
 def get_typhoon_data():
@@ -136,30 +137,81 @@ def get_international_typhoon_data():
     它會解析 ATCF 格式的文本數據，並將其轉換成結構化的 JSON 格式返回給前端。
     """
     print("Received request for /get-international-typhoon-data")
-    try:
-        # 從 Tropical Tidbits 獲取 JTWC ATCF 數據
-        response = requests.get(TROPICAL_TIDBITS_JTWC_URL, timeout=15)
-        response.raise_for_status() # 檢查 HTTP 狀態碼，如果不是 200 則拋出異常
-        
-        atcf_data = response.text
-        
-        # 解析 ATCF 數據
-        typhoon_info = parse_jtwc_atcf(atcf_data)
-        
-        if typhoon_info:
-            return jsonify({"success": True, "typhoon": typhoon_info})
-        else:
-            return jsonify({"success": False, "message": "目前沒有活躍的國際颱風數據。"}), 200
+    
+    # 定義時區為 UTC
+    utc_now = datetime.now(pytz.utc)
+    
+    # JTWC 數據通常在 00Z, 06Z, 12Z, 18Z 發布
+    # 我們嘗試獲取最近的發布時間點
+    # 考慮到數據發布可能會有延遲，我們嘗試當前時間點和前幾個時間點
+    
+    # 嘗試的時間點 (UTC)
+    forecast_hours = [0, 6, 12, 18]
+    
+    # 構建可能的文件 URL 列表，從最新的時間點開始嘗試
+    possible_urls = []
+    
+    # 嘗試當天的四個時間點
+    for i in range(2): # 嘗試今天和昨天
+        date_to_check = utc_now - timedelta(days=i)
+        for hour in forecast_hours:
+            # 找到最接近當前時間的過去發布時間
+            if i == 0 and hour > utc_now.hour: # 如果是今天，且小時數還沒到，則跳過
+                continue
+            
+            # 構建時間字串，例如 2025071700
+            dt_str = date_to_check.strftime('%Y%m%d') + f'{hour:02d}'
+            
+            # 構建完整的 URL
+            url = f"{TROPICAL_TIDBITS_JTWC_BASE_URL}{date_to_check.year}/{dt_str}_jtwc.dat"
+            possible_urls.append(url)
+            
+            # 對於當前小時，也嘗試前一個發布時間點，以防最新數據還沒上線
+            if i == 0 and hour == utc_now.hour:
+                prev_hour_idx = (forecast_hours.index(hour) - 1 + len(forecast_hours)) % len(forecast_hours)
+                prev_hour = forecast_hours[prev_hour_idx]
+                prev_dt_str = date_to_check.strftime('%Y%m%d') + f'{prev_hour:02d}'
+                prev_url = f"{TROPICAL_TIDBITS_JTWC_BASE_URL}{date_to_check.year}/{prev_dt_str}_jtwc.dat"
+                if prev_url not in possible_urls: # 避免重複添加
+                    possible_urls.append(prev_url)
 
-    except requests.exceptions.Timeout:
-        print(f"從 {TROPICAL_TIDBITS_JTWC_URL} 獲取數據超時。")
-        return jsonify({"success": False, "error": "獲取國際颱風數據超時，請稍後再試。"}), 504
-    except requests.exceptions.RequestException as e:
-        print(f"從 {TROPICAL_TIDBITS_JTWC_URL} 獲取數據失敗: {e}")
-        return jsonify({"success": False, "error": f"無法獲取國際颱風數據: {str(e)}"}), 500
-    except Exception as e:
-        print(f"解析國際颱風數據時發生錯誤: {e}")
-        return jsonify({"success": False, "error": f"解析國際颱風數據失敗: {str(e)}"}), 500
+    # 嘗試獲取數據，從最新的 URL 開始
+    for url in possible_urls:
+        print(f"嘗試從 {url} 獲取國際颱風數據...")
+        try:
+            response = requests.get(url, timeout=15)
+            response.raise_for_status() # 檢查 HTTP 狀態碼，如果不是 200 則拋出異常
+            
+            atcf_data = response.text
+            
+            # 檢查數據是否為空或無效
+            if not atcf_data.strip():
+                print(f"從 {url} 獲取的數據為空，嘗試下一個 URL。")
+                continue # 數據為空，嘗試下一個 URL
+
+            # 解析 ATCF 數據
+            typhoon_info = parse_jtwc_atcf(atcf_data)
+            
+            if typhoon_info:
+                print(f"成功從 {url} 獲取並解析國際颱風數據。")
+                return jsonify({"success": True, "typhoon": typhoon_info})
+            else:
+                print(f"從 {url} 獲取的數據中未找到活躍颱風資訊，嘗試下一個 URL。")
+                continue # 未找到颱風資訊，嘗試下一個 URL
+
+        except requests.exceptions.Timeout:
+            print(f"從 {url} 獲取數據超時，嘗試下一個 URL。")
+            continue # 超時，嘗試下一個 URL
+        except requests.exceptions.RequestException as e:
+            print(f"從 {url} 獲取數據失敗: {e}，嘗試下一個 URL。")
+            continue # 請求失敗，嘗試下一個 URL
+        except Exception as e:
+            print(f"解析 {url} 數據時發生錯誤: {e}，嘗試下一個 URL。")
+            continue # 解析錯誤，嘗試下一個 URL
+            
+    # 如果所有嘗試都失敗
+    print("所有嘗試的國際颱風數據 URL 都無法獲取或解析。")
+    return jsonify({"success": False, "message": "目前沒有活躍的國際颱風數據，或無法從來源獲取。"}), 200
 
 def parse_jtwc_atcf(atcf_text):
     """
@@ -190,38 +242,47 @@ def parse_jtwc_atcf(atcf_text):
         "forecastTrack": []
     }
     
-    current_typhoon_id = None # 用於追蹤當前處理的颱風
+    # 儲存已處理的颱風 ID，我們只處理第一個找到的颱風
+    processed_typhoon_id = None 
 
     for line in lines:
         parts = [p.strip() for p in line.split(',')]
         
-        if len(parts) < 10: # 確保有足夠的欄位
+        # ATCF 數據至少有 28 個欄位 (雖然我們只用前面幾個)
+        if len(parts) < 28: 
+            # print(f"ATCF 行欄位不足，跳過: {line}") # 偵錯用
             continue
         
         try:
             basin = parts[0]
             cyclone_num = parts[1]
             # 組合颱風 ID，例如 WP012025 (西北太平洋第一個颱風，2025年)
-            typhoon_id = f"{basin}{cyclone_num}{parts[2][0:4]}" 
+            # 這裡使用年份作為 ID 的一部分，確保不同年份的颱風不會混淆
+            typhoon_year = parts[2][0:4]
+            typhoon_id = f"{basin}{cyclone_num}{typhoon_year}" 
 
-            # 如果是新的颱風，更新當前颱風 ID 和名稱
-            if current_typhoon_id is None:
-                current_typhoon_id = typhoon_id
-            elif current_typhoon_id != typhoon_id:
-                # 遇到新的颱風，這裡我們只處理第一個或最新的颱風
-                # 如果需要處理多個颱風，需要更複雜的數據結構
-                print(f"偵測到新的颱風 {typhoon_id}，但目前只處理第一個颱風。")
-                continue # 跳過這個颱風的數據
+            # 如果這是第一個找到的颱風，或者我們正在處理同一個颱風
+            if processed_typhoon_id is None:
+                processed_typhoon_id = typhoon_id
+            elif processed_typhoon_id != typhoon_id:
+                # 遇到新的颱風，但我們目前只處理第一個颱風，所以跳過後面的
+                # 如果需要處理多個颱風，需要更複雜的數據結構，例如返回一個列表
+                # print(f"偵測到新的颱風 {typhoon_id}，但目前只處理第一個颱風 {processed_typhoon_id}。") # 偵錯用
+                continue 
 
             # 提取時間 (YYYYMMDDHH)
             time_str = parts[2] # 例如 2025071700
-            # 將時間字串轉換為 ISO 格式
-            # 確保時間字串長度足夠，並處理可能缺失的情況
+            
+            iso_time = None
             if len(time_str) >= 10:
-                dt_object = datetime.strptime(time_str, '%Y%m%d%H')
-                iso_time = dt_object.isoformat() + 'Z' # 加上 Z 表示 UTC 時間
-            else:
-                iso_time = None # 無法解析時間
+                try:
+                    dt_object = datetime.strptime(time_str, '%Y%m%d%H')
+                    iso_time = dt_object.isoformat() + 'Z' # 加上 Z 表示 UTC 時間
+                except ValueError:
+                    print(f"無法解析時間字串: {time_str}")
+            
+            if iso_time is None:
+                continue # 無法解析時間，跳過此行
 
             # 提取緯度 (Lat) 和經度 (Lon)
             # 緯度格式可能是 123N (12.3度北緯) 或 123S (12.3度南緯)
@@ -238,7 +299,7 @@ def parse_jtwc_atcf(atcf_text):
                 lon = -lon
             
             if lat is None or lon is None:
-                print(f"無法解析座標: Lat={lat_raw}, Lon={lon_raw}")
+                # print(f"無法解析座標，跳過: Lat={lat_raw}, Lon={lon_raw}") # 偵錯用
                 continue # 跳過無效座標的行
 
             # 提取最大持續風速 (Max Sustained Wind, 節)
@@ -254,7 +315,7 @@ def parse_jtwc_atcf(atcf_text):
 
             # 判斷是歷史路徑還是預測路徑
             # 'BEST' 通常代表最佳路徑 (已分析的歷史數據)
-            # 'PROB' 或其他技術代碼代表預測
+            # 'P' 或其他技術代碼代表預測 (例如 'PROB', 'OFCL', 'CIMH' 等)
             technique = parts[3].strip()
 
             point = {
@@ -267,6 +328,17 @@ def parse_jtwc_atcf(atcf_text):
                 "forecastPeriod_hours": forecast_period_hours
             }
 
+            # 颱風名稱 (從 ATCF 數據的第 28 個欄位獲取，如果存在的話)
+            # ATCF 數據的第 28 個欄位 (索引 27) 通常是氣旋名稱
+            if len(parts) > 27 and parts[27].strip():
+                typhoon_data["name"] = parts[27].strip()
+            elif typhoon_data["name"] == "未知颱風": # 如果還沒有設定過名稱，使用氣旋編號
+                 typhoon_data["name"] = f"TC {cyclone_num}"
+
+
+            # 判斷是過去路徑還是預測路徑
+            # 'BEST' 是歷史數據
+            # 其他技術代碼 (如 'OFCL', 'PROB', 'CIMH', 'JTWC') 是預測數據
             if technique == 'BEST':
                 typhoon_data["pastTrack"].append(point)
                 # 如果是 BEST 數據且預報時效為 0，則視為當前位置
@@ -278,26 +350,17 @@ def parse_jtwc_atcf(atcf_text):
                 if typhoon_data["currentPosition"] is None and forecast_period_hours == 0:
                      typhoon_data["currentPosition"] = point
 
-            # 嘗試從 ATCF 數據中獲取颱風名稱
-            # ATCF 數據通常不直接包含颱風的英文或中文名稱，
-            # 但有時會從備註或預報討論中提取。
-            # 這裡我們暫時使用一個通用名稱，或者從 JTWC 的預報號碼來生成。
-            # 實際應用中，可能需要額外的查找表或從 JTWC 網站的 HTML 內容中抓取。
-            if len(parts) > 27 and parts[27].strip(): # 嘗試從備註欄位獲取名稱
-                typhoon_data["name"] = parts[27].strip()
-            elif len(parts) > 1 and parts[1].strip(): # 否則使用氣旋編號作為名稱的一部分
-                typhoon_data["name"] = f"TC {parts[1].strip()}"
-            else:
-                typhoon_data["name"] = "未知颱風"
-
         except (ValueError, IndexError) as e:
-            print(f"解析 ATCF 行失敗: {line} - 錯誤: {e}")
+            # print(f"解析 ATCF 行失敗: {line} - 錯誤: {e}") # 偵錯用
             continue # 跳過無法解析的行
     
     # 對路徑點進行排序，確保時間順序正確
+    # 過去路徑按時間排序
     typhoon_data["pastTrack"].sort(key=lambda x: x["time"] if x["time"] else "")
+    # 預測路徑按預報時效排序
     typhoon_data["forecastTrack"].sort(key=lambda x: x["forecastPeriod_hours"])
 
+    # 如果沒有任何路徑數據，則返回 None
     return typhoon_data if typhoon_data["pastTrack"] or typhoon_data["forecastTrack"] else None
 
 
