@@ -85,7 +85,7 @@ def get_cwa_warnings():
     print("Received request for /get-cwa-warnings") # 輸出訊息到伺服器控制台，確認請求是否到達代理伺服器
     try:
         # 向中央氣象署 RSS 服務發送請求
-        rss_response = requests.get(CWA_RSS_WARNING_URL)
+        rss_response = requests.get(CWA_WARNINGS_RSS_URL)
         rss_response.raise_for_status() # 如果響應狀態碼不是 200，則拋出 HTTPError
 
         # 解析 XML 格式的 RSS 回應
@@ -155,7 +155,8 @@ def get_international_typhoon_data():
     for url in possible_urls:
         print(f"嘗試從 {url} 獲取國際颱風數據...")
         try:
-            response = requests.get(url, timeout=15)
+            # *** 修正點：添加 verify=False 來禁用 SSL 憑證驗證 ***
+            response = requests.get(url, timeout=15, verify=False) 
             response.raise_for_status() # 檢查 HTTP 狀態碼，如果不是 200 則拋出異常
             
             atcf_data = response.text
