@@ -9,7 +9,7 @@ import requests # 用於發送 HTTP 請求到外部 API
 import json # 導入 json 模組用於解析錯誤訊息
 import xml.etree.ElementTree as ET # 用於解析 XML 格式的資料 (例如氣象特報 RSS 和 KML)
 import csv # 導入 csv 模組用於解析 CSV 格式的資料
-from datetime import datetime # 移除 pytz，直接使用 datetime
+from datetime import datetime
 import io # 用於處理字串作為檔案對象
 
 app = Flask(__name__)
@@ -149,15 +149,28 @@ def parse_kml_data(kml_text):
     typhoon_paths = []
 
     # 遍歷所有的 Placemark
-    for i, placemark in enumerate(root.findall('.//kml:Placemark', ns)):
+    placemarks = root.findall('.//kml:Placemark', ns)
+    print(f"Found {len(placemarks)} Placemark elements in KML.")
+
+    if not placemarks:
+        print("No Placemark elements found in the KML. This might mean no active typhoon data.")
+        return [] # 返回空列表，表示沒有找到路徑
+
+    for i, placemark in enumerate(placemarks):
+        print(f"Processing Placemark {i+1}...")
         name_element = placemark.find('kml:name', ns)
         name = name_element.text if name_element is not None else f"未知路徑 {i+1}"
+        print(f"  Placemark Name: {name}")
         
         line_string_element = placemark.find('kml:LineString', ns)
         if line_string_element is not None:
+            print(f"  Found LineString for {name}.")
             coordinates_element = line_string_element.find('kml:coordinates', ns)
             if coordinates_element is not None and coordinates_element.text:
                 coords_text = coordinates_element.text.strip()
+                # 移除多餘的空白字符，確保每個座標組都正確分割
+                coords_text = ' '.join(coords_text.split()) 
+                print(f"  Raw coordinates text: '{coords_text[:100]}...' (truncated)") # Log first 100 chars
                 points = []
                 # KML 座標格式是 longitude,latitude,altitude，以空格分隔
                 for coord_str in coords_text.split(' '):
@@ -168,11 +181,14 @@ def parse_kml_data(kml_text):
                             lon = float(parts[0]) 
                             lat = float(parts[1])
                             points.append({"lat": lat, "lon": lon}) # Leaflet 期望 latitude,longitude
+                        else:
+                            print(f"    Skipping malformed coordinate part (not enough parts): '{coord_str}'")
                     except ValueError:
-                        print(f"    Skipping invalid coordinate part: '{coord_str}'")
+                        print(f"    Skipping invalid coordinate part (parsing error): '{coord_str}'")
                         continue # 跳過格式不正確的座標
                 
                 if points:
+                    print(f"  Successfully parsed {len(points)} points for {name}.")
                     typhoon_paths.append({
                         "name": name,
                         "path": points
@@ -198,14 +214,31 @@ def get_international_typhoon_data():
 
     try:
         # 1. 下載 NSTC 開放資料平台的 CSV 索引檔案
+        print(f"Attempting to fetch CSV from: {NSTC_OPENDATA_CSV_URL}")
         csv_response = requests.get(NSTC_OPENDATA_CSV_URL, timeout=15)
         csv_response.raise_for_status() # 檢查 HTTP 錯誤
+        print(f"Successfully fetched CSV. Status: {csv_response.status_code}")
         
         # 使用 io.StringIO 將字串內容模擬成檔案，以便 csv.reader 讀取
-        csv_file = io.StringIO(csv_response.text)
-        reader = csv.reader(csv_file)
-        
-        header = next(reader) # 讀取標頭行
+        # 由於 CSV 可能包含 BOM，嘗試使用 'utf-8-sig' 或 'big5'
+        csv_content = csv_response.text
+        try:
+            csv_file = io.StringIO(csv_content)
+            reader = csv.reader(csv_file)
+            header = next(reader) # 讀取標頭行
+            print(f"CSV Header: {header}")
+        except Exception as e:
+            print(f"Initial CSV parsing failed (UTF-8). Trying Big5. Error: {e}")
+            try:
+                csv_file = io.StringIO(csv_content.encode('latin-1').decode('big5')) # 嘗試 Big5 解碼
+                reader = csv.reader(csv_file)
+                header = next(reader)
+                print(f"CSV Header (Big5): {header}")
+            except Exception as e_big5:
+                print(f"CSV parsing failed for both UTF-8 and Big5. Error: {e_big5}")
+                raise ValueError("無法正確解析 NSTC 開放資料平台 CSV 檔案編碼。")
+
+
         data_link_index = -1
         description_index = -1
 
@@ -213,28 +246,32 @@ def get_international_typhoon_data():
         try:
             data_link_index = header.index('資料連結')
             description_index = header.index('說明')
-        except ValueError:
-            print("CSV 標頭中未找到 '資料連結' 或 '說明' 欄位。")
-            return jsonify({"success": False, "message": "NSTC 開放資料平台 CSV 格式不符預期。"}), 500
+        except ValueError as e:
+            print(f"CSV 標頭中未找到 '資料連結' 或 '說明' 欄位。錯誤: {e}")
+            return jsonify({"success": False, "message": "NSTC 開放資料平台 CSV 格式不符預期 (缺少必要欄位)。"}), 500
 
         kml_data_url = None
         # 2. 遍歷 CSV 內容，尋找包含颱風路徑的連結
-        for row in reader:
+        for i, row in enumerate(reader):
+            print(f"Processing CSV row {i+1}: {row}")
             if len(row) > max(data_link_index, description_index):
                 description = row[description_index]
-                if "颱風路徑" in description or "熱帶氣旋" in description or "預測路徑" in description:
+                if "颱風路徑" in description or "熱帶氣旋" in description or "預測路徑" in description or "Typhoon Track" in description:
                     kml_data_url = row[data_link_index]
                     print(f"在 CSV 中找到颱風路徑連結: {kml_data_url}")
                     break
+            else:
+                print(f"Skipping malformed CSV row {i+1} (not enough columns): {row}")
         
         if not kml_data_url:
             print("在 NSTC 開放資料平台 CSV 中未找到任何颱風路徑的資料連結。")
-            return jsonify({"success": False, "message": "目前沒有活躍的國際颱風數據，或無法從來源獲取（NSTC）。"}), 200
+            return jsonify({"success": False, "message": "目前沒有活躍的國際颱風數據，或無法從來源獲取（NSTC：未找到路徑連結）。"}), 200
 
         # 3. 從找到的 KML 連結下載實際的颱風數據
-        print(f"嘗試從 {kml_data_url} 獲取 KML 數據...")
+        print(f"嘗試從找到的 KML URL 獲取數據: {kml_data_url}")
         kml_response = requests.get(kml_data_url, timeout=30) # 增加超時時間
         kml_response.raise_for_status() # 檢查 HTTP 錯誤
+        print(f"Successfully fetched KML from {kml_data_url}. Status: {kml_response.status_code}")
         
         kml_data = kml_response.text
         
@@ -257,13 +294,16 @@ def get_international_typhoon_data():
         return jsonify({"success": False, "error": "獲取國際颱風數據超時，請稍後再試。"}), 504
     except requests.exceptions.RequestException as e:
         print(f"從 NSTC 獲取數據失敗: {e}")
-        return jsonify({"success": False, "error": f"無法獲取國際颱風數據: {str(e)}"}), 500
+        return jsonify({"success": False, "error": f"無法從 NSTC 獲取國際颱風數據: {str(e)}"}), 500
     except ET.ParseError as e:
-        print(f"解析 KML 數據失敗: {e}")
+        print(f"解析 KML 數據失敗: {e}. 原始 KML 開頭: {kml_data[:500] if 'kml_data' in locals() else 'N/A'}")
         return jsonify({"success": False, "error": f"解析國際颱風 KML 數據失敗: {str(e)}"}), 500
+    except ValueError as e: # 捕獲 CSV 編碼或格式錯誤
+        print(f"CSV 處理錯誤: {e}")
+        return jsonify({"success": False, "error": f"處理 NSTC CSV 檔案時發生錯誤: {str(e)}"}), 500
     except Exception as e:
         print(f"處理國際颱風數據時發生未知錯誤: {e}")
-        return jsonify({"success": False, "error": f"處理國際颱風數據失敗: {str(e)}"}), 500
+        return jsonify({"success": False, "error": f"處理國際颱風數據時發生未知錯誤: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
