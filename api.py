@@ -28,7 +28,8 @@ CWA_RSS_WARNING_URL = 'https://www.cwa.gov.tw/rss/Data/cwa_warning.xml'
 
 # NRL Monterey JTWC 數據基礎 URL (用於解析 JTWC 的 ATCF 數據)
 # 這是 JTWC ATCF 數據的一個穩定歸檔來源
-NRL_MONTEREY_JTWC_BASE_URL = 'https://www.nrlmry.navy.mil/atcf_web/data/'
+# *** 修正點：更新為正確的 NRL Monterey ATCF 數據基礎 URL ***
+NRL_MONTEREY_JTWC_BASE_URL = 'https://science.nrlmry.navy.mil/atcf/data/'
 
 @app.route('/get-typhoon-data', methods=['GET'])
 def get_typhoon_data():
@@ -84,7 +85,7 @@ def get_cwa_warnings():
     """
     print("Received request for /get-cwa-warnings") # 輸出訊息到伺服器控制台，確認請求是否到達代理伺服器
     try:
-        # *** 修正點：將 CWA_WARNINGS_RSS_URL 改為 CWA_RSS_WARNING_URL ***
+        # 修正點：將 CWA_WARNINGS_RSS_URL 改為 CWA_RSS_WARNING_URL
         rss_response = requests.get(CWA_RSS_WARNING_URL)
         rss_response.raise_for_status() # 如果響應狀態碼不是 200，則拋出 HTTPError
 
